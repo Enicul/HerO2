@@ -2,7 +2,7 @@
 
 This repository provides the code for HerO 2, the runner-up for the AveriTeC shared task.
 
-The system description paper will be published in the proceedings of the 8th FEVER workshop (co-located with ACL 2025)
+The system description paper is published in the proceedings of the 8th FEVER workshop (co-located with ACL 2025) [[paper]](https://aclanthology.org/2025.fever-1.16/)
 
 # Method: HerO 2
 <p align="center"><img src="https://github.com/user-attachments/assets/b538efa1-d1ac-49e3-9219-2073d93e1de0" width="900" height="400"></p>
