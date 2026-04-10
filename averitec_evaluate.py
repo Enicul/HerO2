@@ -275,8 +275,8 @@ class EV2REvaluator:
     TEMPERATURE = 0
 
     # -------------------------
-    llamaapi_api_token = ""     # To obtain the LLAMA API token, please visit this URL: https://console.llmapi.com/en/dashboard
-    llamaapi_client = OpenAI(api_key=llamaapi_api_token, base_url="https://api.llmapi.com/")
+    llamaapi_api_token = "ollama"     # To obtain the LLAMA API token, please visit this URL: https://console.llmapi.com/en/dashboard
+    llamaapi_client = OpenAI(api_key=llamaapi_api_token, base_url="http://localhost:8000/v1")
     # -------------------------
 
     def __init__(self, properties=None):
@@ -343,7 +343,7 @@ class EV2REvaluator:
 
             completion = self.llamaapi_client.chat.completions.create(
                 messages=messages,
-                model="llama3.3-70b",
+                model="/home/aied_test/models/Llama-3.3-70B-Instruct-AWQ",
                 temperature=self.TEMPERATURE,
                 max_tokens=self.MAX_TOKENS
             )
