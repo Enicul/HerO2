@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 import tqdm
 from vllm import LLM, SamplingParams
 import argparse
@@ -40,7 +41,7 @@ def main(args):
         model= args.model,
         tensor_parallel_size=gpu_counts, 
         max_model_len=8192,
-        gpu_memory_utilization=0.95,
+        gpu_memory_utilization=float(os.environ.get("VLLM_GPU_MEM_UTIL", "0.95")),
         dtype=torch.bfloat16,
         enforce_eager=True,
         trust_remote_code=True,

@@ -1,5 +1,6 @@
 from vllm import LLM, SamplingParams
 import json
+import os
 import torch
 import time
 from datetime import datetime, timedelta
@@ -18,7 +19,7 @@ class VLLMGenerator:
             model=model_name,
             tensor_parallel_size=self.device_count,
             max_model_len=4096,
-            gpu_memory_utilization=0.95,
+            gpu_memory_utilization=float(os.environ.get("VLLM_GPU_MEM_UTIL", "0.95")),
             enforce_eager=True,
             trust_remote_code=True,
             dtype=torch.bfloat16,
