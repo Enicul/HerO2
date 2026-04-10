@@ -3,22 +3,12 @@ import argparse
 import time
 import json
 import nltk
-import sys
-from rank_bm25 import BM25Okapi
-import numpy as np
 import torch
+import numpy as np
 from datetime import datetime, timedelta
+from rank_bm25 import BM25Okapi
 
-# ── ParamMute suppression ─────────────────────────────────────────────────────
-PARAMMUTE_SRC = "/home/aied_test/ParamMute/src/transformers/src"
-if PARAMMUTE_SRC not in sys.path:
-    sys.path.insert(0, PARAMMUTE_SRC)
-from transformers import AutoTokenizer
-from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM_w_act_inhibit
-# ─────────────────────────────────────────────────────────────────────────────
-
-INHIBIT_RATIO = 0.5
-INHIBIT_LAYERS = [6, 7, 8, 17, 18, 19, 20, 25, 26, 27]
+from suppression_utils import load_model_with_suppression, add_suppression_args
 
 
 def download_nltk_data(package_name, download_dir='nltk_data'):
@@ -26,9 +16,7 @@ def download_nltk_data(package_name, download_dir='nltk_data'):
     nltk.data.path.append(download_dir)
     try:
         nltk.data.find(f'tokenizers/{package_name}')
-        print(f"Package '{package_name}' is already downloaded")
     except LookupError:
-        print(f"Downloading {package_name}...")
         nltk.download(package_name, download_dir=download_dir)
 
 
@@ -74,15 +62,13 @@ def generate_hf(model, tokenizer, prompt: str, device, max_new_tokens: int = 512
 
 def main(args):
     script_start = time.time()
-    start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"Script started at: {start_time}")
-    print(f"Suppression ON — lambda={INHIBIT_RATIO}, layers={INHIBIT_LAYERS}")
+    print(f"Script started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Suppression: layers={args.suppress_layers or 'none'}, ratio={args.inhibit_ratio}")
     print(f"Resuming from claim index: {args.start}")
 
     download_nltk_data('punkt')
     download_nltk_data('punkt_tab')
 
-    # Load reference corpus
     corpus_start = time.time()
     with open(args.reference_corpus, "r", encoding="utf-8") as f:
         train_examples = json.load(f)
@@ -97,22 +83,15 @@ def main(args):
     prompt_bm25 = BM25Okapi(tokenized_corpus)
     print(f"Reference corpus processed in: {format_time(time.time() - corpus_start)}")
 
-    # Load suppressed model
     device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
-    print(f"Loading suppressed model on {device} ...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
-    model = Qwen2ForCausalLM_w_act_inhibit.from_pretrained(
-        args.model,
-        torch_dtype=torch.bfloat16,
-        device_map={"": device},
-        trust_remote_code=True,
-        inhibit_strength=INHIBIT_RATIO,
-        inhibit_layer_list=INHIBIT_LAYERS,
+    print(f"Loading model on {device} ...")
+    model, tokenizer, suppressor = load_model_with_suppression(
+        args.model, device,
+        suppress_layers=args.suppress_layers or None,
+        inhibit_ratio=args.inhibit_ratio,
     )
-    model.eval()
     print(f"Model loaded in: {format_time(time.time() - script_start)}")
 
-    # Load target data
     target_examples = []
     with open(args.top_k_target_knowledge, "r", encoding="utf-8") as f:
         for line in f:
@@ -122,9 +101,6 @@ def main(args):
         args.end = len(target_examples)
     print(f"Processing claims {args.start} to {args.end} ({args.end - args.start} total)")
 
-    processing_start = time.time()
-
-    # append mode so we can resume
     with open(args.output_questions, "a", encoding="utf-8") as output_file:
         for idx, example in enumerate(target_examples[args.start:args.end], start=args.start):
             batch_start = time.time()
@@ -174,6 +150,9 @@ def main(args):
             batch_time = time.time() - batch_start
             print(f"Processed example {idx+1}/{args.end} (claim_id={claim_id}). Time: {batch_time:.2f}s")
 
+    if suppressor:
+        suppressor.remove()
+
     total_time = time.time() - script_start
     print(f"\nDone. Total: {format_time(total_time)}")
     print(f"Results -> {args.output_questions}")
@@ -192,5 +171,6 @@ if __name__ == "__main__":
     parser.add_argument("-e", "--end", type=int, default=-1)
     parser.add_argument("-s", "--start", type=int, default=0)
     parser.add_argument("--gpu", type=int, default=0)
+    add_suppression_args(parser)
     args = parser.parse_args()
     main(args)

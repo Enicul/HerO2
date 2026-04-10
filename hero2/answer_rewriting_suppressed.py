@@ -1,22 +1,11 @@
-import copy
 import json
 import tqdm
 import argparse
 import torch
-import sys
 from datetime import datetime, timedelta
 import time
 
-# ── ParamMute suppression ─────────────────────────────────────────────────────
-PARAMMUTE_SRC = "/home/aied_test/ParamMute/src/transformers/src"
-if PARAMMUTE_SRC not in sys.path:
-    sys.path.insert(0, PARAMMUTE_SRC)
-from transformers import AutoTokenizer
-from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM_w_act_inhibit
-# ─────────────────────────────────────────────────────────────────────────────
-
-INHIBIT_RATIO = 0.5
-INHIBIT_LAYERS = [6, 7, 8, 17, 18, 19, 20, 25, 26, 27]
+from suppression_utils import load_model_with_suppression, add_suppression_args
 
 prompt = """The following text provides an evidence obtained through web searches related to a specific question, used for verifying the accuracy of a claim.
 Your task is to answer the question based on this evidence. Ensure your answer is Supported by relevant context from the evidence.
@@ -26,6 +15,7 @@ Question: {}
 
 Evidence: {}
 """
+
 
 def format_time(seconds: float) -> str:
     return str(timedelta(seconds=round(seconds)))
@@ -46,23 +36,16 @@ def generate_hf(model, tokenizer, prompt_text: str, device, max_new_tokens: int 
 
 def main(args):
     script_start = time.time()
-    start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"Script started at: {start_time}")
-    print(f"Suppression ON — lambda={INHIBIT_RATIO}, layers={INHIBIT_LAYERS}")
+    print(f"Script started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Suppression: layers={args.suppress_layers or 'none'}, ratio={args.inhibit_ratio}")
 
     device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
-    print(f"Loading suppressed model on {device} ...")
-
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
-    model = Qwen2ForCausalLM_w_act_inhibit.from_pretrained(
-        args.model,
-        torch_dtype=torch.bfloat16,
-        device_map={"": device},
-        trust_remote_code=True,
-        inhibit_strength=INHIBIT_RATIO,
-        inhibit_layer_list=INHIBIT_LAYERS,
+    print(f"Loading model on {device} ...")
+    model, tokenizer, suppressor = load_model_with_suppression(
+        args.model, device,
+        suppress_layers=args.suppress_layers or None,
+        inhibit_ratio=args.inhibit_ratio,
     )
-    model.eval()
     print(f"Model loaded in {format_time(time.time() - script_start)}")
 
     data = []
@@ -98,8 +81,10 @@ def main(args):
             output_json.write(json.dumps(d, ensure_ascii=False) + "\n")
             output_json.flush()
 
+    if suppressor:
+        suppressor.remove()
+
     total_time = time.time() - script_start
-    end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"\nDone. Total: {format_time(total_time)}")
     print(f"Results -> {args.json_output}")
 
@@ -113,5 +98,6 @@ if __name__ == "__main__":
     parser.add_argument("-m", "--model",
                         default="Qwen/Qwen2.5-7B-Instruct")
     parser.add_argument("--gpu", type=int, default=2)
+    add_suppression_args(parser)
     args = parser.parse_args()
     main(args)

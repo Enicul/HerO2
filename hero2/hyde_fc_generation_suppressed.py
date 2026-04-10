@@ -1,22 +1,11 @@
 import json
 import torch
-import sys
 import time
 from datetime import datetime, timedelta
 import argparse
 from tqdm import tqdm
-from typing import List, Dict, Any
 
-# ── ParamMute suppression ─────────────────────────────────────────────────────
-PARAMMUTE_SRC = "/home/aied_test/ParamMute/src/transformers/src"
-if PARAMMUTE_SRC not in sys.path:
-    sys.path.insert(0, PARAMMUTE_SRC)
-from transformers import AutoTokenizer
-from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM_w_act_inhibit
-# ─────────────────────────────────────────────────────────────────────────────
-
-INHIBIT_RATIO = 0.5
-INHIBIT_LAYERS = [6, 7, 8, 17, 18, 19, 20, 25, 26, 27]
+from suppression_utils import load_model_with_suppression, add_suppression_args
 
 
 def format_time(seconds: float) -> str:
@@ -47,34 +36,25 @@ def generate_hf(model, tokenizer, prompt: str, device, max_new_tokens: int = 512
 def main(args):
     total_start_time = time.time()
     print(f"Script started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Suppression ON — lambda={INHIBIT_RATIO}, layers={INHIBIT_LAYERS}")
+    print(f"Suppression: layers={args.suppress_layers or 'none'}, ratio={args.inhibit_ratio}")
 
-    # Load data
     print("Loading data...")
     with open(args.target_data, 'r', encoding='utf-8') as f:
         examples = json.load(f)
     print(f"Loaded {len(examples)} examples")
 
-    # Load suppressed model
     device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
-    print(f"Loading suppressed model on {device} ...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
-    model = Qwen2ForCausalLM_w_act_inhibit.from_pretrained(
-        args.model,
-        torch_dtype=torch.bfloat16,
-        device_map={"": device},
-        trust_remote_code=True,
-        inhibit_strength=INHIBIT_RATIO,
-        inhibit_layer_list=INHIBIT_LAYERS,
+    print(f"Loading model on {device} ...")
+    model, tokenizer, suppressor = load_model_with_suppression(
+        args.model, device,
+        suppress_layers=args.suppress_layers or None,
+        inhibit_ratio=args.inhibit_ratio,
     )
-    model.eval()
     print(f"Model loaded in {format_time(time.time() - total_start_time)}")
 
-    # Process examples
     processed_data = []
     for example in tqdm(examples, desc="Processing examples"):
         prompt = prepare_prompt(example["claim"], tokenizer)
-        # Generate n=8 hypothetical documents (same as original)
         hypo_docs = []
         for _ in range(8):
             output = generate_hf(model, tokenizer, prompt, device)
@@ -82,7 +62,6 @@ def main(args):
         example['hypo_fc_docs'] = hypo_docs
         processed_data.append(example)
 
-    # Save results
     total_time = time.time() - total_start_time
     print(f"\nSaving results...")
     for claim_id, example in enumerate(processed_data):
@@ -91,6 +70,9 @@ def main(args):
 
     with open(args.json_output, "w", encoding="utf-8") as f:
         json.dump(processed_data, f, ensure_ascii=False, indent=4)
+
+    if suppressor:
+        suppressor.remove()
 
     print(f"Done. Total: {format_time(total_time)}")
     print(f"Results -> {args.json_output}")
@@ -105,5 +87,6 @@ if __name__ == "__main__":
     parser.add_argument('-m', '--model',
                         default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--gpu', type=int, default=0)
+    add_suppression_args(parser)
     args = parser.parse_args()
     main(args)

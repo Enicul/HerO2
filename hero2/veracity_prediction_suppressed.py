@@ -1,20 +1,12 @@
 import tqdm
 import argparse
 import torch
-import transformers
 import json
-import sys
 from datetime import datetime, timedelta
 import time
 from typing import List, Dict, Optional
 
-# ── ParamMute suppression: use the modified transformers from ParamMute ──────
-PARAMMUTE_SRC = "/home/aied_test/ParamMute/src/transformers/src"
-if PARAMMUTE_SRC not in sys.path:
-    sys.path.insert(0, PARAMMUTE_SRC)
-from transformers import AutoTokenizer
-from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM_w_act_inhibit
-# ─────────────────────────────────────────────────────────────────────────────
+from suppression_utils import load_model_with_suppression, add_suppression_args
 
 LABEL = [
     "Supported",
@@ -22,9 +14,6 @@ LABEL = [
     "Not Enough Evidence",
     "Conflicting Evidence/Cherrypicking",
 ]
-
-INHIBIT_RATIO = 0.75
-INHIBIT_LAYERS = [6, 7, 8, 17, 18, 19, 20, 25, 26, 27]
 
 
 def truncate_chat_prompt(prompt: str, tokenizer, max_len: int) -> str:
@@ -102,9 +91,8 @@ def generate_hf(model, tokenizer, prompt: str, device, max_new_tokens: int = 204
 
 def main(args):
     script_start = time.time()
-    start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"Script started at: {start_time}")
-    print(f"Suppression ON — lambda={INHIBIT_RATIO}, layers={INHIBIT_LAYERS}")
+    print(f"Script started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Suppression: layers={args.suppress_layers or 'none'}, ratio={args.inhibit_ratio}")
 
     data_load_start = time.time()
     try:
@@ -118,21 +106,14 @@ def main(args):
     print(f"Data loading took: {format_time(time.time() - data_load_start)}")
     print(f"Total examples: {len(examples)}")
 
-    model_start = time.time()
     device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
-    print(f"Loading suppressed model on {device} ...")
-
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
-    model = Qwen2ForCausalLM_w_act_inhibit.from_pretrained(
-        args.model,
-        torch_dtype=torch.bfloat16,
-        device_map={"": device},
-        trust_remote_code=True,
-        inhibit_strength=INHIBIT_RATIO,
-        inhibit_layer_list=INHIBIT_LAYERS,
+    print(f"Loading model on {device} ...")
+    model, tokenizer, suppressor = load_model_with_suppression(
+        args.model, device,
+        suppress_layers=args.suppress_layers or None,
+        inhibit_ratio=args.inhibit_ratio,
     )
-    model.eval()
-    print(f"Model loaded in {format_time(time.time() - model_start)}")
+    print(f"Model loaded in {format_time(time.time() - script_start)}")
 
     predictions = []
     processing_start = time.time()
@@ -169,6 +150,9 @@ def main(args):
     with open(args.output_file, "w", encoding="utf-8") as f:
         json.dump(predictions, f, ensure_ascii=False, indent=4)
 
+    if suppressor:
+        suppressor.remove()
+
     total_time = time.time() - script_start
     processing_time = time.time() - processing_start
     print(f"\nDone. Total: {format_time(total_time)}")
@@ -185,5 +169,6 @@ if __name__ == "__main__":
                         default="data_store/hero2/dev_veracity_prediction_suppress_veracity.json")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--gpu", type=int, default=0)
+    add_suppression_args(parser)
     args = parser.parse_args()
     main(args)
